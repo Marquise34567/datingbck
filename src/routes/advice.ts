@@ -177,67 +177,15 @@ router.post('/', async (req, res) => {
       };
     }
 
-    function coachResponse(routerOut: RouterOut, inp: string, conv: any, premium = false) {
-      // Build coach JSON per required schema
-      const replyLines: string[] = [];
-      const questions: string[] = [];
-      const drafts: string[] = [];
-      const nextSteps: string[] = [];
-
-      // Mirror + empathize with an engaging opener that references the user's text
-      const shortInp = (inp || '').trim().slice(0, 200);
-      if (shortInp) {
-        replyLines.push(`You said: "${shortInp}".`);
-      }
-      // Engaging human opener
-      if (/ask(ed)? you out|asked me out|asked me/.test(shortInp.toLowerCase())) {
-        replyLines.push("Nice — she asked you out. You must really like her.");
-      } else if (routerOut.tone === 'calm') {
-        replyLines.push('That sounds really heavy — I hear you.');
-      } else {
-        replyLines.push('Got it — I hear you.');
-      }
-
-      if (routerOut.needs_clarification) {
-        // safe default text
-        drafts.push("Hey — I want to get this right. Can you tell me exactly what they said?\n(Quick: copy/paste their message)");
-        // add clarifying questions
-        for (const q of routerOut.clarifying_questions) questions.push(q);
-        nextSteps.push('Copy their exact message and paste it in your reply so I can craft a tailored text.');
-        return {
-          reply: replyLines.join(' '),
-          questions,
-          draft_texts: drafts,
-          next_steps: nextSteps,
-          mode_used: mode === 'rizz' ? 'Rizz' : mode === 'strategy' ? 'Strategy' : 'Dating advice',
-          confidence: 0.6,
-        };
-      }
-
-      // No clarification needed: provide immediate value
-      replyLines.push('Here are tailored options you can use now.');
-      // Drafts depending on premium; label Short/Confident/Playful and keep modern dating tone
-      if (premium) {
-        drafts.push(`Short: Want to grab coffee tomorrow?`);
-        drafts.push(`Confident: Loved our last chat — wanna grab coffee Thu or Sat?`);
-        drafts.push(`Playful: You + me + coffee = yes? 😉`);
-        drafts.push(`Calm: Been thinking about you — when are you free to meet?`);
-        nextSteps.push('Pick one message and send it within the next 24 hours.');
-        nextSteps.push('If they reply positively, follow up with a specific time suggestion.');
-      } else {
-        drafts.push(`Short: Want to grab coffee tomorrow?`);
-        drafts.push(`Confident: Hey — are you free this week to grab coffee?`);
-        drafts.push(`Playful: Coffee this week? I know a spot you’ll like.`);
-        nextSteps.push('Choose one text and send it — keep it short and specific.');
-      }
-
+    function coachResponse(_routerOut: RouterOut, _inp: string, _conv: any, _premium = false) {
+      // Fallback disabled: do not fabricate coaching text locally.
       return {
-        reply: replyLines.join(' '),
-        questions,
-        draft_texts: drafts.slice(0, premium ? 6 : 3),
-        next_steps: nextSteps,
+        reply: 'AI is temporarily unavailable. Please try again.',
+        questions: [],
+        draft_texts: [],
+        next_steps: [],
         mode_used: mode === 'rizz' ? 'Rizz' : mode === 'strategy' ? 'Strategy' : 'Dating advice',
-        confidence: premium ? 0.9 : 0.7,
+        confidence: 0.0,
       };
     }
 
@@ -261,7 +209,7 @@ router.post('/', async (req, res) => {
       // Run our router analysis
       const routerOut = analyzeRouter(text, req.body?.conversation);
 
-      // If we have an LLM pipeline available, prefer that but shape the output to our coach schema when possible
+      // If we have an LLM pipeline available, prefer that. If not, do not fabricate responses.
       coachResult = null;
       if (process.env.USE_OLLAMA === 'true') {
         try {
@@ -283,8 +231,11 @@ router.post('/', async (req, res) => {
         }
       }
 
-      // If no LLM or mapping failed, use deterministic coachResponse
+      // If no LLM present, explicitly return an unavailable error rather than fabricating text
       if (!coachResult) {
+        if (process.env.USE_OLLAMA !== 'true') {
+          return res.status(502).json({ ok: false, error: 'AI_UNAVAILABLE', message: 'AI is temporarily unavailable. Please try again.' });
+        }
         coachResult = coachResponse(routerOut, text, req.body?.conversation, !!(ent && ent.isPremium));
       }
 

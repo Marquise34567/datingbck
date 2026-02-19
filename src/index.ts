@@ -515,6 +515,75 @@ app.post('/api/screenshot-coach', upload.single('image'), async (req, res) => {
   }
 });
 
+// POST /api/chat - always call Ollama and return raw reply
+app.post('/api/chat', express.json(), async (req, res) => {
+  try {
+    const message = String(req.body?.message || req.body?.text || req.body?.userMessage || '');
+    const mode = String(req.body?.mode || 'dating');
+    if (!message.trim()) return res.status(400).json({ ok: false, error: 'EMPTY_INPUT' });
+
+    const model = process.env.OLLAMA_MODEL || 'gemma3:4b';
+    const systemPrompt = `You are Sparkd, a helpful dating coach. Reply concisely with situation-aware, empathetic, and actionable advice. Match the user's requested mode (${mode}).`;
+
+    const body = {
+      model,
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: message }
+      ],
+      temperature: 0.9,
+      top_p: 0.9,
+      repeat_penalty: 1.22,
+      num_ctx: 4096,
+      stream: false,
+    };
+
+    console.log('OLLAMA model:', model);
+    console.log('USER:', message.slice(0, 1000));
+
+    let resp: any;
+    try {
+      resp = await callOllamaChat(body);
+    } catch (e) {
+      try {
+        resp = await callOllamaGenerate(body);
+      } catch (e2) {
+        console.error('[api/chat] ollama call failed', e, e2);
+        return res.status(500).json({ ok: false, error: 'OLLAMA_UNREACHABLE', details: String(e) });
+      }
+    }
+
+    const reply = extractTextFromOllamaResponse(resp) || '';
+    console.log('OLLAMA reply:', String(reply).slice(0, 300));
+
+    if (!reply.trim()) {
+      return res.status(502).json({ ok: false, error: 'EMPTY_REPLY', message: 'Model returned empty output' });
+    }
+
+    return res.json({ ok: true, reply, modeUsed: mode });
+  } catch (err: any) {
+    console.error('[api/chat] error', err);
+    return res.status(500).json({ ok: false, error: err?.message || String(err) });
+  }
+});
+
+// Debug route to list Ollama tags/models
+app.get('/api/debug/ollama', async (req, res) => {
+  try {
+    const url = `${OLLAMA_URL.replace(/\/$/, '')}/api/tags`;
+    const r = await fetch(url);
+    if (!r.ok) {
+      const t = await r.text().catch(() => '<no body>');
+      return res.status(502).json({ ok: false, error: 'ollama_unreachable', detail: t });
+    }
+    const data = await r.json().catch(() => null);
+    return res.json({ ok: true, models: data });
+  } catch (err: any) {
+    console.error('[api/debug/ollama] failed', err);
+    return res.status(500).json({ ok: false, error: 'failed', message: err && err.message });
+  }
+});
+
 const PORT = Number(process.env.PORT) || 8080;
 
 app.listen(PORT, "0.0.0.0", () => {
