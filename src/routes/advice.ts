@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { addAdvice, getAllAdvice } from '../store/adviceStore';
+import { coachBrainV2 } from '../coachBrainV2';
 
 const router = Router();
 
@@ -17,7 +18,7 @@ router.get('/', (_req, res) => {
 // POST: dual-purpose endpoint
 // - If body looks like a persisted advice (author + text) -> keep existing create behavior
 // - Otherwise treat as a generation request coming from the frontend and return a coach reply
-router.post('/', (req, res) => {
+router.post('/', async (req, res) => {
   // Safe, truncated logging for debugging
   if (process.env.NODE_ENV !== 'production') {
     console.log('advice body keys:', Object.keys(req.body || {}));
@@ -76,9 +77,22 @@ router.post('/', (req, res) => {
       });
     }
 
-    // Minimal deterministic reply for now (no LLM integration here)
-    // Keep fallback generic but do NOT echo the user's exact input or include
-    // canned filler phrases that encourage template-completion.
+    // If the server is configured to use Ollama, try to call the compiled
+    // coach implementation in `dist/` so we can reuse the LLM logic. If that
+    // fails, fall back to a deterministic, safe reply.
+    if (process.env.USE_OLLAMA === 'true') {
+      try {
+        const out = await coachBrainV2({ sessionId: req.body?.sessionId, userMessage: text, mode });
+        if (out && typeof out.message === 'string') {
+          return res.json({ ok: true, message: out.message, mode });
+        }
+      } catch (e: any) {
+        console.warn('[api/advice] coachBrainV2 error:', e?.message ?? e);
+        // fall through to deterministic reply
+      }
+    }
+
+    // Deterministic fallback
     let reply = '';
     if (mode === 'rizz') {
       reply = `I hear you. Keep it playful and confident.\n\nTry 2 short message options and one clear next step.`;
