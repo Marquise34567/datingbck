@@ -6,6 +6,7 @@ export async function ollamaChat(opts: {
   system?: string;
   user?: string;
   temperature?: number;
+  maxTokens?: number;
 }) {
   const { model, messages, system, user, temperature = 0.7 } = opts as any;
 
@@ -22,6 +23,7 @@ export async function ollamaChat(opts: {
     temperature,
     stream: false,
   } as any;
+  if (typeof (opts as any).maxTokens === "number") body.max_tokens = (opts as any).maxTokens;
 
   const r = await fetch(process.env.OLLAMA_URL || "http://localhost:11434/api/chat", {
     method: "POST",

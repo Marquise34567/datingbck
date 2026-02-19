@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { addAdvice, getAllAdvice } from '../store/adviceStore';
 import { coachBrainV2 } from '../coachBrainV2';
+import { getEntitlements, incrementSparkCount, getDailyRemaining } from '../entitlements';
 
 const router = Router();
 
@@ -77,19 +78,36 @@ router.post('/', async (req, res) => {
       });
     }
 
-    // If the server is configured to use Ollama, try to call the compiled
-    // coach implementation in `dist/` so we can reuse the LLM logic. If that
-    // fails, fall back to a deterministic, safe reply.
-    if (process.env.USE_OLLAMA === 'true') {
-      try {
-        const out = await coachBrainV2({ sessionId: req.body?.sessionId, userMessage: text, mode });
-        if (out && typeof out.message === 'string') {
-          return res.json({ ok: true, message: out.message, mode });
-        }
-      } catch (e: any) {
-        console.warn('[api/advice] coachBrainV2 error:', e?.message ?? e);
-        // fall through to deterministic reply
+    // Enforce daily limits based on entitlements (sessionId used as uid in prototype)
+    try {
+      const uid = req.body?.sessionId as string;
+      const ent = getEntitlements(uid);
+      const remaining = getDailyRemaining(uid).dailyRemaining;
+      if (ent && !ent.isPremium && remaining <= 0) {
+        return res.status(429).json({ ok: false, code: 'DAILY_LIMIT', message: 'Free users are limited to 3 Spark conversations per day. Upgrade to Premium for unlimited access.' });
       }
+
+      // If the server is configured to use Ollama, try to call coachBrainV2
+      if (process.env.USE_OLLAMA === 'true') {
+        try {
+          const advanced = !!(ent && ent.isPremium);
+          const out = await coachBrainV2({ sessionId: uid, userMessage: text, mode, advanced });
+          if (out && typeof out.message === 'string') {
+            // increment usage for non-premium users
+            try {
+              if (!(ent && ent.isPremium)) incrementSparkCount(uid, 1);
+            } catch (e) {
+              console.warn('increment spark count failed', e);
+            }
+            return res.json({ ok: true, message: out.message, mode });
+          }
+        } catch (e: any) {
+          console.warn('[api/advice] coachBrainV2 error:', e?.message ?? e);
+          // fall through to deterministic reply
+        }
+      }
+    } catch (err) {
+      console.warn('entitlements check error', err);
     }
 
     // Deterministic fallback

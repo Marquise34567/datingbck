@@ -80,8 +80,8 @@ function extractMessage(data: unknown): string {
   return d.message ?? d.reply ?? d.text ?? d.advice ?? (d.error ? `Error: ${d.error}` : "");
 }
 
-async function llmAssist(opts: { mode: Mode; userMessage: string; sessionId: string; intent: Intent }) {
-  const { mode, userMessage, sessionId, intent } = opts;
+async function llmAssist(opts: { mode: Mode; userMessage: string; sessionId: string; intent: Intent; advanced?: boolean }) {
+  const { mode, userMessage, sessionId, intent, advanced = false } = opts as any;
   const h = getHistory(sessionId).slice(-12);
   const transcript = h.map((x) => `${x.role === "user" ? "USER" : "COACH"}: ${x.text}`).join("\n");
 
@@ -123,7 +123,11 @@ Follow these rules strictly; output plain natural language only.`;
 
   const personaSystem = memLines.length ? `${baseSystem}\n\nSession memory:\n${memLines.join("\n")}` : baseSystem;
 
-  const system = mode === "strategy" ? `${personaSystem}\n\n(Strategy mode: prioritize big-picture assessment, timeline, and one prioritized move.)` : personaSystem;
+  const advancedNote = advanced
+    ? "\n\n(Advanced mode: provide deeper step-by-step actions, 4-6 ready-to-send message options with tone labels, and an expanded decision tree.)"
+    : "";
+
+  const system = (mode === "strategy" ? `${personaSystem}\n\n(Strategy mode: prioritize big-picture assessment, timeline, and one prioritized move.)` : personaSystem) + advancedNote;
 
   const historyMessages = h.map((turn) => ({
     role: turn.role === "user" ? "user" : "assistant",
@@ -139,12 +143,14 @@ Follow these rules strictly; output plain natural language only.`;
   ];
 
   const model = process.env.OLLAMA_MODEL || "llama3.1";
-  const raw = await ollamaChat({ model, messages, temperature: 0.25 });
+  const maxTokens = advanced ? 1024 : 256;
+  const raw = await ollamaChat({ model, messages, temperature: advanced ? 0.35 : 0.25, maxTokens });
   return raw as unknown;
 }
 
-export async function coachBrainV2(body: { sessionId: string; userMessage: string; mode?: Mode }): Promise<{ message: string }> {
-  const sessionId = body.sessionId;
+export async function coachBrainV2(body: { sessionId: string; userMessage: string; mode?: Mode; advanced?: boolean }): Promise<{ message: string }> {
+  const sessionId = body.sessionId as string;
+  const advanced = !!(body as any).advanced;
   const mode: Mode = body.mode === "rizz" ? "rizz" : body.mode === "strategy" ? "strategy" : "dating_advice";
   const msg = (body.userMessage || "").trim();
   const intent = detectIntent(msg);
@@ -157,7 +163,7 @@ export async function coachBrainV2(body: { sessionId: string; userMessage: strin
 
   if (useLLM) {
     try {
-      const raw = await llmAssist({ mode, userMessage: msg, sessionId, intent });
+      const raw = await llmAssist({ mode, userMessage: msg, sessionId, intent, advanced });
       reply = extractMessage(raw) || "";
       if (reply) reply = reply.split(/\n{2,}/).map((s) => s.trim()).join("\n\n");
     } catch (err) {
