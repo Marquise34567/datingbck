@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { addAdvice, getAllAdvice } from '../store/adviceStore';
 import { coachBrainV2 } from '../coachBrainV2';
 import { getEntitlements, incrementSparkCount, getDailyRemaining } from '../entitlements';
+import { pushTurn, setSessionMemory } from '../memoryStore';
 
 const router = Router();
 
@@ -79,9 +80,11 @@ router.post('/', async (req, res) => {
     }
 
     // Enforce daily limits based on entitlements (sessionId used as uid in prototype)
+    let uid = req.body?.sessionId as string | undefined;
+    let ent: any = null;
     try {
-      const uid = req.body?.sessionId as string;
-      const ent = getEntitlements(uid);
+      uid = uid || (req.body?.uid as string);
+      ent = getEntitlements(uid);
       const remaining = getDailyRemaining(uid).dailyRemaining;
       if (ent && !ent.isPremium && remaining <= 0) {
         return res.status(429).json({ ok: false, code: 'DAILY_LIMIT', message: 'Free users are limited to 3 Spark conversations per day. Upgrade to Premium for unlimited access.' });
@@ -91,15 +94,37 @@ router.post('/', async (req, res) => {
       if (process.env.USE_OLLAMA === 'true') {
         try {
           const advanced = !!(ent && ent.isPremium);
-          const out = await coachBrainV2({ sessionId: uid, userMessage: text, mode, advanced });
-          if (out && typeof out.message === 'string') {
-            // increment usage for non-premium users
+          const result = await coachBrainV2({ sessionId: uid, userMessage: text, mode, advanced });
+          if (result && typeof result.message === 'string') {
+            // update history and memory
+            try {
+              if (uid) pushTurn(uid, { role: 'user', text, ts: Date.now() });
+            } catch (e) {
+              console.warn('push user turn failed', e);
+            }
+
+            try {
+              if (uid) pushTurn(uid, { role: 'coach', text: result.message, ts: Date.now() });
+            } catch (e) {
+              console.warn('push coach turn failed', e);
+            }
+
+            // Increment usage for non-premium users
             try {
               if (!(ent && ent.isPremium)) incrementSparkCount(uid, 1);
             } catch (e) {
               console.warn('increment spark count failed', e);
             }
-            return res.json({ ok: true, message: out.message, mode });
+
+            // Update simple session memory summary
+            try {
+              const summary = (result.message || '').slice(0, 600);
+              setSessionMemory(uid, { whatHappened: summary });
+            } catch (e) {
+              console.warn('set session memory failed', e);
+            }
+
+            return res.json({ ok: true, message: result.message, mode });
           }
         } catch (e: any) {
           console.warn('[api/advice] coachBrainV2 error:', e?.message ?? e);
@@ -118,6 +143,13 @@ router.post('/', async (req, res) => {
       reply = `Quick strategy: assess the relationship momentum, pick one prioritized move, and set a timeline.\n\nGive 2 short options to execute.`;
     } else {
       reply = `I hear you. Here are two short message options and one clear next step to move forward.`;
+    }
+
+    // increment usage for non-premium users for deterministic reply path
+    try {
+      if (uid && !(ent && ent.isPremium)) incrementSparkCount(uid, 1);
+    } catch (e) {
+      console.warn('increment spark count failed', e);
     }
 
     return res.json({ ok: true, message: reply, mode });

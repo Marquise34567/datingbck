@@ -3,6 +3,9 @@ type Ent = {
   plan: string | null;
   sparkDailyCount: number;
   sparkDailyDate: string; // YYYY-MM-DD
+  stripeCustomerId?: string | null;
+  stripeSubscriptionId?: string | null;
+  currentPeriodEnd?: string | null; // ISO date
 };
 
 const store = new Map<string, Ent>();
@@ -29,7 +32,7 @@ export function getEntitlements(uid: string) {
 
 export function setPremium(uid: string, isPremium: boolean, plan: string | null = null) {
   if (!uid) return null;
-  const prev = store.get(uid) || { isPremium: false, plan: null, sparkDailyCount: 0, sparkDailyDate: todayDate() };
+  const prev = store.get(uid) || { isPremium: false, plan: null, sparkDailyCount: 0, sparkDailyDate: todayDate(), stripeCustomerId: null, stripeSubscriptionId: null, currentPeriodEnd: null };
   const next = { ...prev, isPremium, plan };
   store.set(uid, next);
   return { ...next };
@@ -37,7 +40,7 @@ export function setPremium(uid: string, isPremium: boolean, plan: string | null 
 
 export function incrementSparkCount(uid: string, by = 1) {
   if (!uid) return null;
-  const e = store.get(uid) || { isPremium: false, plan: null, sparkDailyCount: 0, sparkDailyDate: todayDate() };
+  const e = store.get(uid) || { isPremium: false, plan: null, sparkDailyCount: 0, sparkDailyDate: todayDate(), stripeCustomerId: null, stripeSubscriptionId: null, currentPeriodEnd: null };
   if (e.sparkDailyDate !== todayDate()) {
     e.sparkDailyDate = todayDate();
     e.sparkDailyCount = 0;
@@ -60,6 +63,16 @@ export function resetSparkDaily(uid: string) {
   if (!e) return null;
   e.sparkDailyDate = todayDate();
   e.sparkDailyCount = 0;
+  store.set(uid, e);
+  return { ...e };
+}
+
+export function updateStripeInfo(uid: string, opts: { customerId?: string | null; subscriptionId?: string | null; currentPeriodEnd?: string | null }) {
+  if (!uid) return null;
+  const e = store.get(uid) || { isPremium: false, plan: null, sparkDailyCount: 0, sparkDailyDate: todayDate(), stripeCustomerId: null, stripeSubscriptionId: null, currentPeriodEnd: null };
+  if (opts.customerId !== undefined) e.stripeCustomerId = opts.customerId;
+  if (opts.subscriptionId !== undefined) e.stripeSubscriptionId = opts.subscriptionId;
+  if (opts.currentPeriodEnd !== undefined) e.currentPeriodEnd = opts.currentPeriodEnd;
   store.set(uid, e);
   return { ...e };
 }
