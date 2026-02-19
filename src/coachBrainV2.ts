@@ -80,7 +80,18 @@ function extractMessage(data: unknown): string {
   return d.message ?? d.reply ?? d.text ?? d.advice ?? (d.error ? `Error: ${d.error}` : "");
 }
 
-async function llmAssist(opts: { mode: Mode; userMessage: string; sessionId: string; intent: Intent; advanced?: boolean }) {
+function badReply(s: string) {
+  const lower = (s || "").toLowerCase();
+  return (
+    lower.includes("that's real") ||
+    lower.includes("aight") ||
+    lower.includes("say less") ||
+    lower.includes("tell me one sentence") ||
+    (s || "").length < 20
+  );
+}
+
+async function llmAssist(opts: { mode: Mode; userMessage: string; sessionId: string; intent: Intent; advanced?: boolean; repairInstruction?: string }) {
   const { mode, userMessage, sessionId, intent, advanced = false } = opts as any;
   const h = getHistory(sessionId).slice(-12);
   const transcript = h.map((x) => `${x.role === "user" ? "USER" : "COACH"}: ${x.text}`).join("\n");
@@ -112,6 +123,30 @@ TEXT STYLE: modern, natural, concise. No filler. No manipulation. No harassment.
 MEMORY (SESSION): Track: who ended it, why, what happened, user goal, whether they want closure or to move on. Use this context in replies.
 
 Follow these rules strictly; output plain natural language only.`;
+  // Replace the previous freeform prompt with a structured JSON-output prompt for the coach stage
+  const coachSystem = `You are Sparkd, a modern dating coach. You sound like a real human. You respond to what the user said, not a template.
+
+RULES:
+- Start by reflecting what happened + the user's goal in 1–2 sentences.
+- Always mirror at least one specific detail from the user's last message in your first 2 sentences. For example: "You got broken up with — that's rough."
+- Then give a concrete next move (not generic advice).
+- If the user asks "what do I text back", you MUST:
+  1) propose 3 ready-to-send texts customized to their situation
+  2) ask 1–2 clarifying questions ONLY if needed (e.g., "How well do you know her?")
+- Never say "Suggested reply for: (no input)".
+- Avoid generic phrases like "be confident"; instead show exact wording.
+- Keep it short and punchy.
+
+OUTPUT JSON ONLY (no extra text):
+{
+  "reply": string,
+  "draft_texts": string[],
+  "questions": string[],
+  "next_steps": string[]
+}
+
+Produce only valid JSON. If you cannot answer, return at minimum {"reply":"I couldn't help right now","draft_texts":[],"questions":[],"next_steps":[]}.
+`;
 
   const sessionMem = getSessionMemory(sessionId || "") || {};
   const memLines: string[] = [];
@@ -121,7 +156,7 @@ Follow these rules strictly; output plain natural language only.`;
   if (sessionMem.userGoal) memLines.push(`userGoal: ${sessionMem.userGoal}`);
   if (typeof sessionMem.wantsClosure === "boolean") memLines.push(`wantsClosure: ${sessionMem.wantsClosure}`);
 
-  const personaSystem = memLines.length ? `${baseSystem}\n\nSession memory:\n${memLines.join("\n")}` : baseSystem;
+  const personaSystem = memLines.length ? `${coachSystem}\n\nSession memory:\n${memLines.join("\n")}` : coachSystem;
 
   const advancedNote = advanced
     ? "\n\n(Advanced mode: provide deeper step-by-step actions, 4-6 ready-to-send message options with tone labels, and an expanded decision tree.)"
@@ -134,7 +169,10 @@ Follow these rules strictly; output plain natural language only.`;
     content: String(turn.text || ""),
   }));
 
-  const finalUserContent = `Mode: ${mode}\n\nLatest user message:\n${userMessage}\n\nPlease reply as the coach to the latest user message. Use empathy, give a clear next step, provide 2-3 short message options labeled by tone, and ask at most one clarifying question if needed. Output plain natural language only.`;
+  let finalUserContent = `Mode: ${mode}\n\nLatest user message:\n${userMessage}\n\nPlease produce a JSON object matching the schema EXACTLY (reply, draft_texts, questions, next_steps). Output only valid JSON.`;
+  if (opts.repairInstruction) {
+    finalUserContent += `\n\nREPAIR INSTRUCTION: ${opts.repairInstruction}`;
+  }
 
   const messages = [
     { role: "system", content: system },
@@ -163,7 +201,41 @@ export async function coachBrainV2(body: { sessionId: string; userMessage: strin
 
   if (useLLM) {
     try {
-      const raw = await llmAssist({ mode, userMessage: msg, sessionId, intent, advanced });
+      const raw = String(await llmAssist({ mode, userMessage: msg, sessionId, intent, advanced }));
+      // raw should be JSON per system instruction — try to parse
+      let parsed: any = null;
+      try {
+        parsed = JSON.parse(raw);
+      } catch (e) {
+        // not JSON — fall back to plain text extraction
+      }
+
+      if (parsed && typeof parsed.reply === 'string') {
+        // validate reply and optionally repair
+        if (badReply(parsed.reply)) {
+          try {
+            const repairInstruction = "Rewrite the reply to be warm, human, and specific. No slang. Start with a compassionate sentence. Provide actionable steps and 3 draft texts if texting is relevant. Return valid JSON only.";
+            const raw2 = String(await llmAssist({ mode, userMessage: msg, sessionId, intent, advanced, repairInstruction }));
+            let parsed2: any = null;
+            try {
+              parsed2 = JSON.parse(raw2);
+            } catch (e) {
+              // ignore
+            }
+            if (parsed2 && typeof parsed2.reply === 'string') {
+              reply = parsed2.reply.trim();
+              return { message: reply, ...(parsed2 ? { coach: parsed2 } as any : {}) } as any;
+            }
+          } catch (e) {
+            // repair attempt failed — fall back to original parsed
+          }
+        }
+
+        reply = parsed.reply.trim();
+        // attach coach object to return shape via message+coach mapping (caller can use coach)
+        return { message: reply, ...(parsed ? { coach: parsed } as any : {}) } as any;
+      }
+
       reply = extractMessage(raw) || "";
       if (reply) reply = reply.split(/\n{2,}/).map((s) => s.trim()).join("\n\n");
     } catch (err) {
