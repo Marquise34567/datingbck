@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { addAdvice, getAllAdvice } from '../store/adviceStore';
 import { coachBrainV2 } from '../coachBrainV2';
-import { getEntitlements, incrementSparkCount, getDailyRemaining } from '../entitlements';
+import { getEntitlements, incrementSparkCount, getDailyRemaining, getWeeklyRemaining, incrementConversationCount } from '../entitlements';
 import { pushTurn, setSessionMemory } from '../memoryStore';
 
 const router = Router();
@@ -163,8 +163,19 @@ router.post('/', async (req, res) => {
       const drafts: string[] = [];
       const nextSteps: string[] = [];
 
-      // Mirror + empathize
-      replyLines.push(routerOut.tone === 'calm' ? `That sounds really heavy — I hear you.` : `Got it — I hear you.`);
+      // Mirror + empathize with an engaging opener that references the user's text
+      const shortInp = (inp || '').trim().slice(0, 200);
+      if (shortInp) {
+        replyLines.push(`You said: "${shortInp}".`);
+      }
+      // Engaging human opener
+      if (/ask(ed)? you out|asked me out|asked me/.test(shortInp.toLowerCase())) {
+        replyLines.push("Nice — she asked you out. You must really like her.");
+      } else if (routerOut.tone === 'calm') {
+        replyLines.push('That sounds really heavy — I hear you.');
+      } else {
+        replyLines.push('Got it — I hear you.');
+      }
 
       if (routerOut.needs_clarification) {
         // safe default text
@@ -183,18 +194,19 @@ router.post('/', async (req, res) => {
       }
 
       // No clarification needed: provide immediate value
-      replyLines.push('Here are clear options you can use now.');
-      // Drafts depending on premium
+      replyLines.push('Here are tailored options you can use now.');
+      // Drafts depending on premium; label Short/Confident/Playful and keep modern dating tone
       if (premium) {
-        drafts.push(`Short: Want to catch up this week?`);
+        drafts.push(`Short: Want to grab coffee tomorrow?`);
         drafts.push(`Confident: Loved our last chat — wanna grab coffee Thu or Sat?`);
         drafts.push(`Playful: You + me + coffee = yes? 😉`);
         drafts.push(`Calm: Been thinking about you — when are you free to meet?`);
         nextSteps.push('Pick one message and send it within the next 24 hours.');
         nextSteps.push('If they reply positively, follow up with a specific time suggestion.');
       } else {
-        drafts.push(`Short: Hey — you free this week?`);
-        drafts.push(`Confident: Want to grab coffee this week?`);
+        drafts.push(`Short: Want to grab coffee tomorrow?`);
+        drafts.push(`Confident: Hey — are you free this week to grab coffee?`);
+        drafts.push(`Playful: Coffee this week? I know a spot you’ll like.`);
         nextSteps.push('Choose one text and send it — keep it short and specific.');
       }
 
@@ -217,15 +229,19 @@ router.post('/', async (req, res) => {
       uid = uid || (req.body?.uid as string);
       ent = getEntitlements(uid);
       const remaining = getDailyRemaining(uid).dailyRemaining;
+      const weeklyRemaining = getWeeklyRemaining(uid).weeklyRemaining;
       if (ent && !ent.isPremium && remaining <= 0) {
         return res.status(429).json({ ok: false, code: 'DAILY_LIMIT', message: 'Free users are limited to 3 Spark conversations per day. Upgrade to Premium for unlimited access.' });
+      }
+      if (ent && !ent.isPremium && weeklyRemaining <= 0) {
+        return res.status(429).json({ ok: false, code: 'WEEKLY_LIMIT', message: 'Free users are limited to 3 conversations per week. Upgrade to Premium for unlimited access.' });
       }
 
       // Run our router analysis
       const routerOut = analyzeRouter(text, req.body?.conversation);
 
       // If we have an LLM pipeline available, prefer that but shape the output to our coach schema when possible
-      let coachResult: any = null;
+      coachResult = null;
       if (process.env.USE_OLLAMA === 'true') {
         try {
           const advanced = !!(ent && ent.isPremium);
@@ -258,6 +274,16 @@ router.post('/', async (req, res) => {
           const advanced = !!(ent && ent.isPremium);
           const result = await coachBrainV2({ sessionId: uid, userMessage: text, mode, advanced });
             if (result && typeof result.message === 'string') {
+            const adviceText = result.message;
+            // Hard guard: if model returned empty output, propagate an error
+            if (!adviceText || !String(adviceText).trim()) {
+              return res.status(502).json({
+                ok: false,
+                error: 'EMPTY_ADVICE',
+                message: 'Model returned empty output',
+              });
+            }
+
             // update history and memory
             try {
               if (uid) pushTurn(uid, { role: 'user', text, ts: Date.now() });
@@ -266,29 +292,29 @@ router.post('/', async (req, res) => {
             }
 
             try {
-              if (uid) pushTurn(uid, { role: 'coach', text: result.message, ts: Date.now() });
+              if (uid) pushTurn(uid, { role: 'coach', text: adviceText, ts: Date.now() });
             } catch (e) {
               console.warn('push coach turn failed', e);
             }
 
-            // Increment usage for non-premium users
+            // Increment usage for non-premium users (weekly conversations)
             try {
-              if (!(ent && ent.isPremium)) incrementSparkCount(uid, 1);
+              if (!(ent && ent.isPremium)) incrementConversationCount(uid, 1);
             } catch (e) {
-              console.warn('increment spark count failed', e);
+              console.warn('increment conversation count failed', e);
             }
 
             // Update simple session memory summary
             try {
-              const summary = (result.message || '').slice(0, 600);
+              const summary = (adviceText || '').slice(0, 600);
               setSessionMemory(uid, { whatHappened: summary });
             } catch (e) {
               console.warn('set session memory failed', e);
             }
 
             // also return our structured coach payload if present
-            const coachPayload = coachResult || { reply: result.message };
-            return res.json({ ok: true, message: result.message, mode, coach: coachPayload });
+            const coachPayload = coachResult || { reply: adviceText };
+            return res.json({ ok: true, advice: adviceText, mode, coach: coachPayload });
           }
         } catch (e: any) {
           console.warn('[api/advice] coachBrainV2 error:', e?.message ?? e);
@@ -300,9 +326,9 @@ router.post('/', async (req, res) => {
     }
     // If we reach here, coachResult is ready
     try {
-      if (uid && !(ent && ent.isPremium)) incrementSparkCount(uid, 1);
+      if (uid && !(ent && ent.isPremium)) incrementConversationCount(uid, 1);
     } catch (e) {
-      console.warn('increment spark count failed', e);
+      console.warn('increment conversation count failed', e);
     }
 
     // Persist simple memory and turns
@@ -324,7 +350,16 @@ router.post('/', async (req, res) => {
       console.warn('set session memory failed', e);
     }
 
-    return res.json({ ok: true, message: (coachResult && coachResult.reply) || '', mode, coach: coachResult });
+    const finalAdvice = (coachResult && coachResult.reply) || '';
+    if (!finalAdvice || !String(finalAdvice).trim()) {
+      return res.status(502).json({
+        ok: false,
+        error: 'EMPTY_ADVICE',
+        message: 'Model returned empty output',
+      });
+    }
+
+    return res.json({ ok: true, advice: finalAdvice, mode, coach: coachResult });
   } catch (err: any) {
     console.error('[api/advice] generation error', err);
     return res.status(500).json({ ok: false, error: 'server_error', message: String(err?.message ?? err) });

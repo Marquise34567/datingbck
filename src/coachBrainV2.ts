@@ -147,6 +147,17 @@ OUTPUT JSON ONLY (no extra text):
 
 Produce only valid JSON. If you cannot answer, return at minimum {"reply":"I couldn't help right now","draft_texts":[],"questions":[],"next_steps":[]}.
 `;
+  // Enhance coach instructions: additional voice guidelines appended to the coach system prompt.
+  const enhancedCoachSystem = `
+
+ADDITIONAL VOICE GUIDELINES:
+- Begin with a short, engaging opener that mirrors the user's last message (e.g., "You must really like her — nice!").
+- Use modern, casual, natural language (but never crude).
+- When giving drafts, label them: "Short:", "Confident:", "Playful:" and keep each one a single sentence the user can copy/paste.
+- If the user mentions that someone "asked them out" or "asked you out", acknowledge it explicitly ("Nice — she asked you out.") before offering texts.
+- Tailor recommendations to current dating norms (short, specific invitation, time suggestion, and low-pressure language).
+`;
+  const coachSystemWithEnhancements = coachSystem + enhancedCoachSystem;
 
   const sessionMem = getSessionMemory(sessionId || "") || {};
   const memLines: string[] = [];
@@ -156,7 +167,7 @@ Produce only valid JSON. If you cannot answer, return at minimum {"reply":"I cou
   if (sessionMem.userGoal) memLines.push(`userGoal: ${sessionMem.userGoal}`);
   if (typeof sessionMem.wantsClosure === "boolean") memLines.push(`wantsClosure: ${sessionMem.wantsClosure}`);
 
-  const personaSystem = memLines.length ? `${coachSystem}\n\nSession memory:\n${memLines.join("\n")}` : coachSystem;
+  const personaSystem = memLines.length ? `${coachSystemWithEnhancements}\n\nSession memory:\n${memLines.join("\n")}` : coachSystemWithEnhancements;
 
   const advancedNote = advanced
     ? "\n\n(Advanced mode: provide deeper step-by-step actions, 4-6 ready-to-send message options with tone labels, and an expanded decision tree.)"
