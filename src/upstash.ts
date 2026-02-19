@@ -34,6 +34,16 @@ export async function isPaid(tokenKey: string) {
 
 export { isoWeekKey };
 
+export async function unsetPaid(tokenKey: string) {
+  try {
+    await redis.del(`paid:${tokenKey}`);
+    return true;
+  } catch (e) {
+    console.warn('unsetPaid failed', e);
+    return false;
+  }
+}
+
 export async function consumeWeekly(tokenKey: string, limit = 3) {
   try {
     const week = isoWeekKey();

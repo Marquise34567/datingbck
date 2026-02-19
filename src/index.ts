@@ -5,7 +5,7 @@ import os from 'os';
 import multer from 'multer';
 import { adviceRouter } from './routes/advice';
 import { getEntitlements, setPremium, getDailyRemaining } from './entitlements';
-import redisClient, { incrementWeeklyUsage, getWeeklyUsage, isTokenPaid, markTokenPaid } from './upstash';
+import redisClient, { incrementWeeklyUsage, getWeeklyUsage, isTokenPaid, markTokenPaid, setPaid, unsetPaid, isPaid } from './upstash';
 import { appendPurchaseRow } from './googleSheets';
 import { google } from 'googleapis';
 
@@ -205,6 +205,31 @@ app.get('/api/debug/redis', async (req, res) => {
     console.warn('redis debug failed', e);
     return res.status(500).json({ ok: false, error: e?.message || String(e) });
   }
+});
+
+// Debug routes to manually set/unset/check paid status for a token
+app.post('/api/debug/paid/set', express.json(), async (req, res) => {
+  const token = String(req.body?.token || '');
+  if (!token) return res.status(400).json({ ok: false, error: 'Missing token' });
+
+  await setPaid(token);
+  res.json({ ok: true, token, paid: true });
+});
+
+app.post('/api/debug/paid/unset', express.json(), async (req, res) => {
+  const token = String(req.body?.token || '');
+  if (!token) return res.status(400).json({ ok: false, error: 'Missing token' });
+
+  await unsetPaid(token);
+  res.json({ ok: true, token, paid: false });
+});
+
+app.get('/api/debug/paid/:token', async (req, res) => {
+  const token = String(req.params.token || '');
+  if (!token) return res.status(400).json({ ok: false, error: 'Missing token' });
+
+  const paid = await isPaid(token);
+  res.json({ ok: true, token, paid });
 });
 
 // Token init endpoint: sets HttpOnly `ae_token` cookie if not present
