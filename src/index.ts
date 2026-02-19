@@ -98,9 +98,48 @@ function extractTextFromOllamaResponse(resp: any): string {
   }
 }
 
+// Helper that calls Ollama (chat then generate fallback) and returns only a plain-text reply
+async function fetchOllamaReply(body: any): Promise<{ reply: string; raw?: any }> {
+  try {
+    let resp: any;
+    try {
+      resp = await callOllamaChat(body);
+    } catch (e) {
+      resp = await callOllamaGenerate(body);
+    }
+    const reply = (resp && resp.message && (typeof resp.message.content === 'string' ? resp.message.content : resp.message.content ?? '')) || extractTextFromOllamaResponse(resp) || '';
+    return { reply: String(reply), raw: resp };
+  } catch (err) {
+    throw err;
+  }
+}
+
 const app = express();
 
-app.use(cors({ origin: true, credentials: true }));
+// Trust proxy so secure cookies work behind tunnels/proxies
+app.set('trust proxy', 1);
+
+// CORS: allow sparkdd.live plus any additional origins set in ALLOWED_ORIGINS
+const DEFAULT_ALLOWED = ['https://sparkdd.live'];
+const envOrigins = (process.env.ALLOWED_ORIGINS || '').split(',').map(s => s.trim()).filter(Boolean);
+const allowedOrigins = Array.from(new Set([...DEFAULT_ALLOWED, ...envOrigins]));
+console.log('CORS allowed origins:', allowedOrigins);
+
+const corsOptions = {
+  origin: (origin: string | undefined, callback: any) => {
+    // Allow non-browser requests with no origin (curl, server-to-server)
+    if (!origin) return callback(null, true);
+    if (allowedOrigins.includes(origin)) return callback(null, true);
+    // allow local development hosts
+    if (origin.startsWith('http://localhost') || origin.startsWith('http://127.0.0.1')) return callback(null, true);
+    return callback(new Error('CORS origin denied'), false);
+  },
+  credentials: true,
+  methods: ['GET', 'POST', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'X-Session-Id'],
+};
+
+app.use(cors(corsOptions));
 app.use(cookieParser());
 // Important: Stripe webhook needs the raw body. Register the raw parser
 // route before the JSON body parser middleware so the raw payload is available.
@@ -256,8 +295,10 @@ app.post('/api/token', (req, res) => {
     if (existing) return res.json({ ok: true, tokenSet: true });
 
     const token = (globalThis.crypto && (globalThis.crypto as any).randomUUID ? (globalThis.crypto as any).randomUUID() : require('crypto').randomBytes(16).toString('hex'));
-    const secure = (process.env.NODE_ENV === 'production') || (req.hostname !== 'localhost' && req.hostname !== '127.0.0.1');
-    res.cookie(cookieName, token, { httpOnly: true, sameSite: 'lax', secure, maxAge: 1000 * 60 * 60 * 24 * 365, path: '/' });
+    // For cross-site cookies from the Vercel frontend to the tunneled backend we need
+    // SameSite=None and Secure in production. During local dev Secure may remain false.
+    const secure = process.env.NODE_ENV === 'production';
+    res.cookie(cookieName, token, { httpOnly: true, sameSite: 'none', secure, maxAge: 1000 * 60 * 60 * 24 * 365, path: '/' });
     return res.json({ ok: true, tokenSet: true });
   } catch (e) {
     console.warn('token init failed', e);
@@ -272,8 +313,8 @@ async function getUserFromToken(req: any, res: any) {
     let token = req.cookies && req.cookies[cookieName];
     if (!token) {
       token = (globalThis.crypto && (globalThis.crypto as any).randomUUID ? (globalThis.crypto as any).randomUUID() : require('crypto').randomBytes(16).toString('hex'));
-      const secure = (process.env.NODE_ENV === 'production') || (req.hostname !== 'localhost' && req.hostname !== '127.0.0.1');
-      res.cookie(cookieName, token, { httpOnly: true, sameSite: 'lax', secure, maxAge: 1000 * 60 * 60 * 24 * 365, path: '/' });
+      const secure = process.env.NODE_ENV === 'production';
+      res.cookie(cookieName, token, { httpOnly: true, sameSite: 'none', secure, maxAge: 1000 * 60 * 60 * 24 * 365, path: '/' });
     }
     return { id: String(token) };
   } catch (e) {
@@ -541,9 +582,9 @@ app.post('/api/screenshot-coach', upload.single('image'), async (req, res) => {
       alt_replies: parsed?.alt_replies ?? (Array.isArray(parsed?.alt_replies) ? parsed.alt_replies : (parsed?.alternates || [])),
       warning: parsed?.warning ?? null,
       question: parsed?.question ?? null,
-      raw: resp,
     };
 
+    // DO NOT expose raw Ollama JSON to clients; only return parsed fields.
     return res.json(out);
   } catch (err: any) {
     console.warn('screenshot-coach error', err);
@@ -628,22 +669,13 @@ app.post('/api/chat', express.json(), async (req, res) => {
     console.log('OLLAMA model:', body.model);
     console.log('USER:', message.slice(0, 1000));
 
-    let resp: any;
     try {
-      resp = await callOllamaChat(body);
+      const { reply } = await fetchOllamaReply(body);
+      return res.json({ ok: true, reply, usage: { remaining: isPremium ? null : Math.max(0, FREE_DAILY_LIMIT - used), isPremium } });
     } catch (e) {
-      try {
-        resp = await callOllamaGenerate(body);
-      } catch (e2) {
-        console.error('[api/chat] ollama call failed', e, e2);
-        return res.status(500).json({ ok: false, error: 'OLLAMA_UNREACHABLE', details: String(e) });
-      }
+      console.error('[api/chat] ollama call failed', e);
+      return res.status(500).json({ ok: false, error: 'OLLAMA_UNREACHABLE', details: String(e) });
     }
-
-    // Ensure only text is returned
-    const reply = (resp && resp.message && (typeof resp.message.content === 'string' ? resp.message.content : resp.message.content ?? '')) || extractTextFromOllamaResponse(resp) || '';
-
-    return res.json({ ok: true, reply, usage: { remaining: isPremium ? null : Math.max(0, FREE_DAILY_LIMIT - used), isPremium } });
   } catch (err: any) {
     console.error('[api/chat] error', err);
     return res.status(500).json({ ok: false, error: err?.message || String(err) });
@@ -670,16 +702,12 @@ app.post('/api/chat/init', express.json(), async (req, res) => {
 
     let resp: any;
     try {
-      resp = await callOllamaChat(body);
+      const out = await fetchOllamaReply(body);
+      resp = { message: { content: out.reply } };
     } catch (e) {
-      try {
-        resp = await callOllamaGenerate(body);
-      } catch (e2) {
-        console.error('[api/chat/init] ollama call failed', e, e2);
-        return res.status(502).json({ ok: false, error: 'OLLAMA_UNREACHABLE' });
-      }
+      console.error('[api/chat/init] ollama call failed', e);
+      return res.status(502).json({ ok: false, error: 'OLLAMA_UNREACHABLE' });
     }
-
     // identify user and report usage (do not consume counter)
     let isPremium = false;
     try {
