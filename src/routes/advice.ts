@@ -19,12 +19,14 @@ router.get('/', (_req, res) => {
 // - Otherwise treat as a generation request coming from the frontend and return a coach reply
 router.post('/', (req, res) => {
   // Safe, truncated logging for debugging
-  console.log('advice body keys:', Object.keys(req.body || {}));
-  try {
-    const safeBody = JSON.stringify(req.body, (_k, v) => (typeof v === 'string' && v.length > 1000 ? `${v.slice(0, 1000)}...` : v));
-    console.log('[api/advice] POST body:', safeBody);
-  } catch (e) {
-    console.log('[api/advice] POST body: (unserializable)');
+  if (process.env.NODE_ENV !== 'production') {
+    console.log('advice body keys:', Object.keys(req.body || {}));
+    try {
+      const safeBody = JSON.stringify(req.body, (_k, v) => (typeof v === 'string' && v.length > 1000 ? `${v.slice(0, 1000)}...` : v));
+      console.log('[api/advice] POST body:', safeBody);
+    } catch (e) {
+      console.log('[api/advice] POST body: (unserializable)');
+    }
   }
 
   // Accept multiple field names for input text
