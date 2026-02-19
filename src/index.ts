@@ -356,6 +356,15 @@ app.get('/api/health/ollama', async (req, res) => {
   }
 });
 
+// One-shot debug route to verify Stripe-related env vars and APP_URL
+app.get('/api/debug/stripe-env', (req, res) => {
+  res.json({
+    hasStripeKey: !!process.env.STRIPE_SECRET_KEY,
+    hasPriceId: !!process.env.STRIPE_PRICE_ID,
+    appUrl: process.env.APP_URL || null,
+  });
+});
+
 // Root/info route
 app.get('/', (req, res) => {
   res.send('Dating Advice API is running. Use /api/* endpoints.');
