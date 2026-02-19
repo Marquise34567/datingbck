@@ -553,16 +553,52 @@ app.post('/api/chat', express.json(), async (req, res) => {
       }
     }
 
-    const reply = extractTextFromOllamaResponse(resp) || '';
-    console.log('OLLAMA reply:', String(reply).slice(0, 300));
+    // Per spec: only return the text content so the frontend can't render raw JSON
+    const reply = (resp && resp.message && (typeof resp.message.content === 'string' ? resp.message.content : resp.message.content ?? '')) || '';
+    console.log('OLLAMA reply (trimmed):', String(reply).slice(0, 300));
 
-    if (!reply.trim()) {
-      return res.status(502).json({ ok: false, error: 'EMPTY_REPLY', message: 'Model returned empty output' });
-    }
-
-    return res.json({ ok: true, reply, modeUsed: mode });
+    return res.json({ ok: true, reply });
   } catch (err: any) {
     console.error('[api/chat] error', err);
+    return res.status(500).json({ ok: false, error: err?.message || String(err) });
+  }
+});
+
+// POST /api/chat/init - generate a warm, human opener using Ollama (gemma3:4b)
+app.post('/api/chat/init', express.json(), async (req, res) => {
+  try {
+    const systemPrompt = `You are Sparkdd, a modern dating coach.\nYour job is to start the conversation in a natural, warm, human way.\nDo NOT give advice yet.\nAsk one engaging question that invites the user to explain their situation.\nKeep it short (1–2 sentences max).\nNo generic therapy tone.\nNo clichés.\nVary the style every time.\nAvoid repeating the same structure across sessions.`;
+
+    const body = {
+      model: 'gemma3:4b',
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: 'Start the session with a short, human opener. Ask one question only.' }
+      ],
+      temperature: 0.95,
+      top_p: 0.9,
+      repeat_penalty: 1.25,
+      num_ctx: 4096,
+      stream: false,
+    } as any;
+
+    let resp: any;
+    try {
+      resp = await callOllamaChat(body);
+    } catch (e) {
+      try {
+        resp = await callOllamaGenerate(body);
+      } catch (e2) {
+        console.error('[api/chat/init] ollama call failed', e, e2);
+        return res.status(502).json({ ok: false, error: 'OLLAMA_UNREACHABLE' });
+      }
+    }
+
+    // Per spec: return only the text content under `reply` so frontend can't render raw JSON
+    const reply = (resp && resp.message && (typeof resp.message.content === 'string' ? resp.message.content : resp.message.content ?? '')) || '';
+    return res.json({ ok: true, reply });
+  } catch (err: any) {
+    console.error('[api/chat/init] error', err);
     return res.status(500).json({ ok: false, error: err?.message || String(err) });
   }
 });
