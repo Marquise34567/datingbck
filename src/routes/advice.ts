@@ -77,14 +77,15 @@ router.post('/', (req, res) => {
     }
 
     // Minimal deterministic reply for now (no LLM integration here)
+    // Keep fallback generic but do NOT echo the user's exact input or include
+    // canned filler phrases that encourage template-completion.
     let reply = '';
-    const short = String(text).trim();
     if (mode === 'rizz') {
-      reply = `Rizz reply for: ${short}\n\nKeep it playful and confident.`;
+      reply = `I hear you. Keep it playful and confident.\n\nTry 2 short message options and one clear next step.`;
     } else if (mode === 'strategy') {
-      reply = `Strategy verdict for: ${short}\n\nShort plan: assess, escalate, follow-up.`;
+      reply = `Quick strategy: assess the relationship momentum, pick one prioritized move, and set a timeline.\n\nGive 2 short options to execute.`;
     } else {
-      reply = `Dating advice: ${short}\n\nBe direct, kind, and clear about next steps.`;
+      reply = `I hear you. Here are two short message options and one clear next step to move forward.`;
     }
 
     return res.json({ ok: true, message: reply, mode });
