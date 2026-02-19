@@ -7,18 +7,27 @@
     "dev": "ts-node-dev --respawn --transpile-only src/index.ts",
     "build": "tsc -p .",
     "postinstall": "npm run build",
-    "start": "node dist/index.js"
+    "start": "node dist/index.js",
+    "test:screenshot": "node scripts/test_screenshot_coach.js"
   },
   "dependencies": {
+    "@upstash/redis": "^1.36.2",
+    "cookie-parser": "^1.4.6",
     "cors": "^2.8.5",
     "express": "^4.18.2",
-    "zod": "^3.23.2",
-    "stripe": "^12.10.0"
+    "googleapis": "^116.0.0",
+    "multer": "^1.4.5-lts.1",
+    "stripe": "^12.10.0",
+    "zod": "^3.23.2"
   },
   "devDependencies": {
+    "@types/cookie-parser": "^1.4.3",
     "@types/cors": "^2.8.19",
     "@types/express": "^4.17.17",
+    "@types/multer": "^1.4.7",
     "@types/node": "^20.4.2",
+    "form-data": "^4.0.0",
+    "node-fetch": "^2.6.7",
     "ts-node-dev": "^2.0.0",
     "typescript": "^5.1.6"
   }

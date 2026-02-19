@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { addAdvice, getAllAdvice } from '../store/adviceStore';
 import { coachBrainV2 } from '../coachBrainV2';
 import { getEntitlements, incrementSparkCount, getDailyRemaining, getWeeklyRemaining, incrementConversationCount } from '../entitlements';
+import { getWeeklyUsage, incrementWeeklyUsage, isTokenPaid } from '../upstash';
 import { pushTurn, setSessionMemory } from '../memoryStore';
 
 const router = Router();
@@ -56,9 +57,28 @@ router.post('/', async (req, res) => {
   }
 
   const mode = req.body?.mode ?? req.body?.tab ?? req.body?.persona ?? 'dating';
+  let requestToken: string | null = null;
 
   // Short debug logging for one day to help trace empty-input issues
-  try {
+    try {
+      // Enforce weekly usage via Upstash Redis if available.
+      let token = '';
+      try {
+        const tokenFromCookie = (req.cookies && (req.cookies as any).ae_token) || req.headers['x-session-id'] || req.body?.sessionId || req.body?.uid;
+        token = String(tokenFromCookie || '');
+        requestToken = token || null;
+        if (token) {
+          const paid = await isTokenPaid(token);
+          if (!paid) {
+            const used = await getWeeklyUsage(token);
+            if (used !== null && used >= 3) {
+              return res.status(429).json({ ok: false, code: 'WEEKLY_LIMIT', message: 'Free users are limited to 3 conversations per week. Upgrade to Premium for unlimited access.' });
+            }
+          }
+        }
+      } catch (e) {
+        console.warn('upstash usage check failed', e);
+      }
     console.log('[advice] text length:', String(textValue ?? '').length, 'mode:', mode);
   } catch (e) {
     /* ignore */
@@ -299,7 +319,14 @@ router.post('/', async (req, res) => {
 
             // Increment usage for non-premium users (weekly conversations)
             try {
-              if (!(ent && ent.isPremium)) incrementConversationCount(uid, 1);
+              if (!(ent && ent.isPremium)) {
+                incrementConversationCount(uid, 1);
+                try {
+                  if (requestToken) incrementWeeklyUsage(requestToken);
+                } catch (e) {
+                  console.warn('incrementWeeklyUsage failed', e);
+                }
+              }
             } catch (e) {
               console.warn('increment conversation count failed', e);
             }
@@ -326,7 +353,14 @@ router.post('/', async (req, res) => {
     }
     // If we reach here, coachResult is ready
     try {
-      if (uid && !(ent && ent.isPremium)) incrementConversationCount(uid, 1);
+      if (uid && !(ent && ent.isPremium)) {
+        incrementConversationCount(uid, 1);
+        try {
+          if (requestToken) incrementWeeklyUsage(requestToken);
+        } catch (e) {
+          console.warn('incrementWeeklyUsage failed', e);
+        }
+      }
     } catch (e) {
       console.warn('increment conversation count failed', e);
     }
