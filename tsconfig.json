@@ -6,6 +6,7 @@
     "rootDir": "src",
     "strict": true,
     "esModuleInterop": true,
+    "typeRoots": ["./src/types", "./node_modules/@types"],
     "forceConsistentCasingInFileNames": true,
     "skipLibCheck": true
   }
