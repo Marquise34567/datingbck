@@ -402,10 +402,13 @@ app.post('/api/screenshot-coach', upload.single('image'), async (req, res) => {
 
     let resp: any;
     try {
+      // Debug: log the system prompt being sent to Ollama to ensure prompt changes are applied
+      try { console.log("SYSTEM PROMPT BEING SENT:"); console.log(systemPrompt); } catch (e) { /* ignore logging errors */ }
       resp = await callOllamaChat(body);
     } catch (e) {
       // fallback to /api/generate
       try {
+        try { console.log("SYSTEM PROMPT BEING SENT (generate):"); console.log(systemPrompt); } catch (e) { /* ignore logging errors */ }
         resp = await callOllamaGenerate(body);
       } catch (e2) {
         console.warn('ollama both endpoints failed', e, e2);
