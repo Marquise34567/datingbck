@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { addAdvice, getAllAdvice } from '../store/adviceStore';
 import { coachBrainV2 } from '../coachBrainV2';
+import { runCoach } from '../coachScaffold';
 import { getEntitlements, incrementSparkCount, getDailyRemaining, getWeeklyRemaining, incrementConversationCount } from '../entitlements';
 import { getWeeklyUsage, incrementWeeklyUsage, isTokenPaid } from '../upstash';
 import { pushTurn, setSessionMemory } from '../memoryStore';
@@ -265,20 +266,19 @@ router.post('/', async (req, res) => {
       if (process.env.USE_OLLAMA === 'true') {
         try {
           const advanced = !!(ent && ent.isPremium);
-          const llm = await coachBrainV2({ sessionId: uid || '', userMessage: text, mode, advanced });
-          // llm returns plain text; attempt to map into our coach schema conservatively
-          const plain = (llm && (llm as any).message) || String(llm || '');
-          // Fallback: wrap plain into reply and generate drafts heuristically
+          const model = process.env.OLLAMA_MODEL || undefined;
+          const llmResp = await runCoach({ sessionId: uid || '', userMessage: text, explicitMode: mode as any, advanced, model });
+          const plain = (llmResp && llmResp.parsed && llmResp.parsed.reply) || (llmResp && llmResp.raw) || '';
           coachResult = {
-            reply: plain.split('\n\n')[0] || plain,
+            reply: String(plain).split('\n\n')[0] || String(plain),
             questions: routerOut.needs_clarification ? routerOut.clarifying_questions : [],
-            draft_texts: ent && ent.isPremium ? [plain.slice(0, 200), plain.slice(200, 400)].filter(Boolean) : [plain.slice(0, 200)].filter(Boolean),
+            draft_texts: ent && ent.isPremium ? [String(plain).slice(0, 200), String(plain).slice(200, 400)].filter(Boolean) : [String(plain).slice(0, 200)].filter(Boolean),
             next_steps: ['Follow the chosen script and check back in.'],
             mode_used: mode === 'rizz' ? 'Rizz' : mode === 'strategy' ? 'Strategy' : 'Dating advice',
             confidence: 0.8,
           };
         } catch (e) {
-          console.warn('[api/advice] coachBrainV2 mapping failed', e);
+          console.warn('[api/advice] runCoach mapping failed', e);
           coachResult = null;
         }
       }
@@ -292,60 +292,48 @@ router.post('/', async (req, res) => {
       if (process.env.USE_OLLAMA === 'true') {
         try {
           const advanced = !!(ent && ent.isPremium);
-          const result = await coachBrainV2({ sessionId: uid, userMessage: text, mode, advanced });
-            if (result && typeof result.message === 'string') {
-            const adviceText = result.message;
-            // Hard guard: if model returned empty output, propagate an error
-            if (!adviceText || !String(adviceText).trim()) {
-              return res.status(502).json({
-                ok: false,
-                error: 'EMPTY_ADVICE',
-                message: 'Model returned empty output',
-              });
-            }
-
-            // update history and memory
-            try {
-              if (uid) pushTurn(uid, { role: 'user', text, ts: Date.now() });
-            } catch (e) {
-              console.warn('push user turn failed', e);
-            }
-
-            try {
-              if (uid) pushTurn(uid, { role: 'coach', text: adviceText, ts: Date.now() });
-            } catch (e) {
-              console.warn('push coach turn failed', e);
-            }
-
-            // Increment usage for non-premium users (weekly conversations)
-            try {
-              if (!(ent && ent.isPremium)) {
-                incrementConversationCount(uid, 1);
-                try {
-                  if (requestToken) incrementWeeklyUsage(requestToken);
-                } catch (e) {
-                  console.warn('incrementWeeklyUsage failed', e);
-                }
-              }
-            } catch (e) {
-              console.warn('increment conversation count failed', e);
-            }
-
-            // Update simple session memory summary
-            try {
-              const summary = (adviceText || '').slice(0, 600);
-              setSessionMemory(uid, { whatHappened: summary });
-            } catch (e) {
-              console.warn('set session memory failed', e);
-            }
-
-            // also return our structured coach payload if present
-            const coachPayload = coachResult || { reply: adviceText };
-            return res.json({ ok: true, advice: adviceText, mode, coach: coachPayload });
+          const model = process.env.OLLAMA_MODEL || undefined;
+          const resp = await runCoach({ sessionId: uid || '', userMessage: text, explicitMode: mode as any, advanced, model });
+          const adviceText = (resp && resp.parsed && resp.parsed.reply) || (resp && resp.raw) || '';
+          if (!adviceText || !String(adviceText).trim()) {
+            return res.status(502).json({ ok: false, error: 'EMPTY_ADVICE', message: 'Model returned empty output' });
           }
+
+          try {
+            if (uid) pushTurn(uid, { role: 'user', text, ts: Date.now() });
+          } catch (e) {
+            console.warn('push user turn failed', e);
+          }
+
+          try {
+            if (uid) pushTurn(uid, { role: 'coach', text: adviceText, ts: Date.now() });
+          } catch (e) {
+            console.warn('push coach turn failed', e);
+          }
+
+          try {
+            if (!(ent && ent.isPremium)) {
+              incrementConversationCount(uid, 1);
+              try {
+                if (requestToken) incrementWeeklyUsage(requestToken);
+              } catch (e) {
+                console.warn('incrementWeeklyUsage failed', e);
+              }
+            }
+          } catch (e) {
+            console.warn('increment conversation count failed', e);
+          }
+
+          try {
+            setSessionMemory(uid, { whatHappened: String(adviceText).slice(0, 600) });
+          } catch (e) {
+            console.warn('set session memory failed', e);
+          }
+
+          const coachPayload = coachResult || { reply: adviceText };
+          return res.json({ ok: true, advice: adviceText, mode, coach: coachPayload });
         } catch (e: any) {
-          console.warn('[api/advice] coachBrainV2 error:', e?.message ?? e);
-          // fall through to deterministic reply
+          console.warn('[api/advice] runCoach error:', e?.message ?? e);
         }
       }
     } catch (err) {

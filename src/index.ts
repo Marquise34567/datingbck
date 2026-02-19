@@ -321,6 +321,41 @@ app.post('/api/checkout', async (req, res) => {
   }
 });
 
+// Known-good Stripe checkout route: /api/billing/create-checkout-session
+app.post('/api/billing/create-checkout-session', async (req, res) => {
+  try {
+    const priceId = process.env.STRIPE_PRICE_ID;
+    const appUrl = process.env.APP_URL;
+
+    if (!process.env.STRIPE_SECRET_KEY) {
+      return res.status(500).json({ error: 'Missing STRIPE_SECRET_KEY' });
+    }
+    if (!priceId) {
+      return res.status(500).json({ error: 'Missing STRIPE_PRICE_ID' });
+    }
+    if (!appUrl) {
+      return res.status(500).json({ error: 'Missing APP_URL' });
+    }
+
+    const StripeLib = (await import('stripe')).default;
+    const stripe = new StripeLib(process.env.STRIPE_SECRET_KEY! as string, ({ apiVersion: '2024-06-20' } as any));
+
+    const session = await stripe.checkout.sessions.create({
+      mode: 'subscription',
+      line_items: [{ price: priceId, quantity: 1 }],
+      success_url: `${appUrl}/success?session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url: `${appUrl}/upgrade`,
+    });
+
+    return res.json({ url: session.url });
+  } catch (e: any) {
+    return res.status(500).json({
+      error: e?.message || 'Stripe checkout creation failed',
+      type: e?.type,
+    });
+  }
+});
+
 
 
 // Legacy webhook path for compatibility
@@ -363,6 +398,26 @@ app.get('/api/debug/stripe-env', (req, res) => {
     hasPriceId: !!process.env.STRIPE_PRICE_ID,
     appUrl: process.env.APP_URL || null,
   });
+});
+
+// Generic debug env route (useful for Railway / container checks)
+app.get('/api/debug/env', (req, res) => {
+  res.json({
+    hasStripeKey: !!process.env.STRIPE_SECRET_KEY,
+    hasPriceId: !!process.env.STRIPE_PRICE_ID,
+    appUrl: process.env.APP_URL || null,
+    nodeEnv: process.env.NODE_ENV || null,
+  });
+});
+
+// Debug cookies route to confirm cookie-parser is working
+app.get('/api/debug/cookies', (req, res) => {
+  res.json({ cookies: req.cookies || null });
+});
+
+// Basic health check for quick verification
+app.get('/api/debug/health', (req, res) => {
+  res.json({ ok: true });
 });
 
 // Root/info route
@@ -460,26 +515,8 @@ app.post('/api/screenshot-coach', upload.single('image'), async (req, res) => {
   }
 });
 
-const port = Number(process.env.PORT || 4000);
-const host = process.env.HOST || '0.0.0.0';
+const PORT = Number(process.env.PORT) || 8080;
 
-app.listen(port, host, () => {
-  const interfaces = os.networkInterfaces();
-  let networkAddress: string | null = null;
-  for (const name of Object.keys(interfaces)) {
-    for (const iface of interfaces[name] || []) {
-      if (iface.family === 'IPv4' && !iface.internal) {
-        networkAddress = `http://${iface.address}:${port}`;
-        break;
-      }
-    }
-    if (networkAddress) break;
-  }
-
-  const localAddress = `http://localhost:${port}`;
-  if (networkAddress) {
-    console.log(`Dating Advice API listening on ${localAddress} (network: ${networkAddress})`);
-  } else {
-    console.log(`Dating Advice API listening on ${localAddress}`);
-  }
+app.listen(PORT, "0.0.0.0", () => {
+  console.log(`Dating Advice API listening on 0.0.0.0:${PORT}`);
 });
