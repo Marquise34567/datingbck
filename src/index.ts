@@ -43,6 +43,14 @@ async function appendTestRow() {
 // Ollama config
 const OLLAMA_URL = process.env.OLLAMA_URL || 'http://127.0.0.1:11434';
 const OLLAMA_VISION_MODEL = process.env.OLLAMA_VISION_MODEL || 'llama3.2-vision';
+// Free daily limit (default 5)
+const FREE_DAILY_LIMIT = Number(process.env.FREE_DAILY_LIMIT || 5);
+
+function secondsUntilMidnightLocal() {
+  const now = new Date();
+  const midnight = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1, 0, 0, 0, 0);
+  return Math.max(60, Math.floor((midnight.getTime() - now.getTime()) / 1000));
+}
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 8 * 1024 * 1024 } });
 
@@ -123,6 +131,14 @@ app.post('/api/webhook/stripe', express.raw({ type: 'application/json' }), async
       try {
         if (token) {
           await markTokenPaid(String(token));
+          try {
+            // also set premium flag for the user id used as client_reference_id
+            await (redisClient as any).set(`user:${String(token)}:premium`, 'true');
+            // keep this key long lived
+            try { await (redisClient as any).expire(`user:${String(token)}:premium`, 60 * 60 * 24 * 365); } catch (e) { /* ignore */ }
+          } catch (e) {
+            console.warn('failed to set user premium flag in redis', e);
+          }
           const subs = session.subscription as any;
           const subscriptionId = subs && subs.id ? subs.id : (session.subscription as string) || null;
           const customerId = String(customer || '');
@@ -232,20 +248,40 @@ app.get('/api/debug/paid/:token', async (req, res) => {
   res.json({ ok: true, token, paid });
 });
 
-// Token init endpoint: sets HttpOnly `ae_token` cookie if not present
+// Token init endpoint: ensure HttpOnly `sparkdd_token` cookie exists and return status
 app.post('/api/token', (req, res) => {
   try {
-    const existing = req.cookies && req.cookies.ae_token;
-    if (existing) return res.json({ ok: true, token: existing });
+    const cookieName = 'sparkdd_token';
+    const existing = req.cookies && req.cookies[cookieName];
+    if (existing) return res.json({ ok: true, tokenSet: true });
+
     const token = (globalThis.crypto && (globalThis.crypto as any).randomUUID ? (globalThis.crypto as any).randomUUID() : require('crypto').randomBytes(16).toString('hex'));
-    const secure = process.env.NODE_ENV === 'production' || (process.env.FORCE_COOKIE_SECURE === 'true');
-    res.cookie('ae_token', token, { httpOnly: true, sameSite: 'lax', secure, maxAge: 1000 * 60 * 60 * 24 * 365, path: '/' });
-    return res.json({ ok: true, token });
+    const secure = (process.env.NODE_ENV === 'production') || (req.hostname !== 'localhost' && req.hostname !== '127.0.0.1');
+    res.cookie(cookieName, token, { httpOnly: true, sameSite: 'lax', secure, maxAge: 1000 * 60 * 60 * 24 * 365, path: '/' });
+    return res.json({ ok: true, tokenSet: true });
   } catch (e) {
     console.warn('token init failed', e);
     return res.status(500).json({ ok: false, error: 'token_init_failed' });
   }
 });
+
+// Helper: read or create stable user id from sparkdd_token cookie
+async function getUserFromToken(req: any, res: any) {
+  const cookieName = 'sparkdd_token';
+  try {
+    let token = req.cookies && req.cookies[cookieName];
+    if (!token) {
+      token = (globalThis.crypto && (globalThis.crypto as any).randomUUID ? (globalThis.crypto as any).randomUUID() : require('crypto').randomBytes(16).toString('hex'));
+      const secure = (process.env.NODE_ENV === 'production') || (req.hostname !== 'localhost' && req.hostname !== '127.0.0.1');
+      res.cookie(cookieName, token, { httpOnly: true, sameSite: 'lax', secure, maxAge: 1000 * 60 * 60 * 24 * 365, path: '/' });
+    }
+    return { id: String(token) };
+  } catch (e) {
+    // fallback: generate an id but do not set cookie
+    const fallback = require('crypto').randomBytes(16).toString('hex');
+    return { id: fallback };
+  }
+}
 
 app.use('/api/advice', adviceRouter);
 
@@ -520,25 +556,76 @@ app.post('/api/chat', express.json(), async (req, res) => {
   try {
     const message = String(req.body?.message || req.body?.text || req.body?.userMessage || '');
     const mode = String(req.body?.mode || 'dating');
+    const tone = String(req.body?.tone || '');
     if (!message.trim()) return res.status(400).json({ ok: false, error: 'EMPTY_INPUT' });
 
-    const model = process.env.OLLAMA_MODEL || 'gemma3:4b';
-    const systemPrompt = `You are Sparkd, a helpful dating coach. Reply concisely with situation-aware, empathetic, and actionable advice. Match the user's requested mode (${mode}).`;
+    // identify user
+    const user = await getUserFromToken(req, res);
+    const userId = user.id;
+
+    let isPremium = false;
+    try {
+      const v: any = await (redisClient as any).get(`user:${userId}:premium`);
+      isPremium = String(v) === 'true' || String(v) === '1';
+    } catch (e) {
+      console.warn('redis get premium failed', e);
+      // fail-open: treat as non-premium but do not block
+      isPremium = false;
+    }
+
+    let used = 0;
+    let remaining: number | null = null;
+
+    if (!isPremium) {
+      try {
+        const today = new Date();
+        const dateKey = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+        const key = `user:${userId}:daily_count:${dateKey}`;
+        const n: any = await (redisClient as any).incr(key);
+        used = Number(n ?? 0);
+        // set TTL to midnight on first use
+        if (used === 1) {
+          try {
+            const ttl = secondsUntilMidnightLocal();
+            await (redisClient as any).expire(key, ttl);
+          } catch (e) {
+            /* ignore */
+          }
+        }
+        remaining = Math.max(0, FREE_DAILY_LIMIT - used);
+        if (used > FREE_DAILY_LIMIT) {
+          return res.json({ ok: false, paywall: true, message: "You're out of responses for today.", tease: "I can help you craft the exact message to send… and predict how they'll respond.", limit: FREE_DAILY_LIMIT, usage: { remaining: 0, isPremium: false } });
+        }
+      } catch (e) {
+        console.warn('redis daily_count failed', e);
+      }
+    }
+
+    // build system prompt depending on premium
+    const baseSystem = `You are Sparkd, a helpful dating coach. Reply concisely with situation-aware, empathetic, and actionable advice.`;
+    const premiumExtra = isPremium ? ` When responding, provide deeper emotional analysis, attachment style read, red/green flags, follow-up sequence, and multiple rewrite options. Use structured sections.` : '';
+    const systemPrompt = `${baseSystem}${premiumExtra} Match the user's requested mode (${mode}).`;
 
     const body = {
-      model,
+      model: process.env.OLLAMA_MODEL || 'gemma3:4b',
       messages: [
         { role: 'system', content: systemPrompt },
         { role: 'user', content: message }
       ],
-      temperature: 0.9,
-      top_p: 0.9,
-      repeat_penalty: 1.22,
+      temperature: isPremium ? 0.95 : 0.85,
+      top_p: isPremium ? 0.9 : 0.9,
+      repeat_penalty: isPremium ? 1.25 : 1.15,
       num_ctx: 4096,
       stream: false,
-    };
+      options: { temperature: isPremium ? 0.95 : 0.85, top_p: 0.9, repeat_penalty: isPremium ? 1.25 : 1.15, num_ctx: 4096 }
+    } as any;
 
-    console.log('OLLAMA model:', model);
+    // include tone in the user text for premium mode
+    if (tone && isPremium) {
+      body.messages.push({ role: 'system', content: `Apply user-selected tone: ${tone}. Keep examples and rewrites in that tone.` });
+    }
+
+    console.log('OLLAMA model:', body.model);
     console.log('USER:', message.slice(0, 1000));
 
     let resp: any;
@@ -553,11 +640,10 @@ app.post('/api/chat', express.json(), async (req, res) => {
       }
     }
 
-    // Per spec: only return the text content so the frontend can't render raw JSON
-    const reply = (resp && resp.message && (typeof resp.message.content === 'string' ? resp.message.content : resp.message.content ?? '')) || '';
-    console.log('OLLAMA reply (trimmed):', String(reply).slice(0, 300));
+    // Ensure only text is returned
+    const reply = (resp && resp.message && (typeof resp.message.content === 'string' ? resp.message.content : resp.message.content ?? '')) || extractTextFromOllamaResponse(resp) || '';
 
-    return res.json({ ok: true, reply });
+    return res.json({ ok: true, reply, usage: { remaining: isPremium ? null : Math.max(0, FREE_DAILY_LIMIT - used), isPremium } });
   } catch (err: any) {
     console.error('[api/chat] error', err);
     return res.status(500).json({ ok: false, error: err?.message || String(err) });
@@ -594,9 +680,35 @@ app.post('/api/chat/init', express.json(), async (req, res) => {
       }
     }
 
-    // Per spec: return only the text content under `reply` so frontend can't render raw JSON
-    const reply = (resp && resp.message && (typeof resp.message.content === 'string' ? resp.message.content : resp.message.content ?? '')) || '';
-    return res.json({ ok: true, reply });
+    // identify user and report usage (do not consume counter)
+    let isPremium = false;
+    try {
+      const user = await getUserFromToken(req, res);
+      const v: any = await (redisClient as any).get(`user:${user.id}:premium`);
+      isPremium = String(v) === 'true' || String(v) === '1';
+    } catch (e) {
+      console.warn('failed to determine premium for init', e);
+      isPremium = false;
+    }
+
+    const reply = (resp && resp.message && (typeof resp.message.content === 'string' ? resp.message.content : resp.message.content ?? '')) || extractTextFromOllamaResponse(resp) || '';
+
+    // compute remaining without incrementing
+    let remaining: number | null = null;
+    try {
+      if (!isPremium) {
+        const now = new Date();
+        const dateKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+        const key = `user:${(await getUserFromToken(req, res)).id}:daily_count:${dateKey}`;
+        const v: any = await (redisClient as any).get(key);
+        const used = Number(v ?? 0);
+        remaining = Math.max(0, FREE_DAILY_LIMIT - used);
+      }
+    } catch (e) {
+      remaining = null;
+    }
+
+    return res.json({ ok: true, reply, usage: { remaining: isPremium ? null : remaining, isPremium } });
   } catch (err: any) {
     console.error('[api/chat/init] error', err);
     return res.status(500).json({ ok: false, error: err?.message || String(err) });
