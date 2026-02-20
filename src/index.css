@@ -1,0 +1,99 @@
+@import "tailwindcss";
+
+/* Animated dark background */
+:root{--bg-a:#05060a;--bg-b:#0b1220;--bg-c:#00121a}
+html,body,#root{height:100%}
+body{margin:0;color:rgb(226 232 240);font-family:Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial;background:linear-gradient(120deg,var(--bg-a) 0%,var(--bg-b) 40%,var(--bg-c) 100%);background-size:300% 300%;animation:gradientShift 12s ease infinite;-webkit-font-smoothing:antialiased}
+@keyframes gradientShift{0%{background-position:0% 50%}50%{background-position:100% 50%}100%{background-position:0% 50%}}
+
+/* Phone shell and bubble styles for iMessage look */
+.phone-shell{border-radius:36px;padding:18px;background:linear-gradient(180deg,rgba(255,255,255,0.02),rgba(255,255,255,0.01));box-shadow:0 20px 40px rgba(2,6,23,0.6),inset 0 1px 0 rgba(255,255,255,0.02)}
+.card-surface{background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.06);backdrop-filter:blur(8px)}
+.bubble{border-radius:18px;padding:12px 14px;line-height:1.25;box-shadow:0 4px 10px rgba(2,6,23,0.35)}
+.bubble-user{background:linear-gradient(180deg,#007aff,#0066d6);color:white;border-bottom-right-radius:6px;border-bottom-left-radius:18px}
+.bubble-assistant{background:rgba(255,255,255,0.92);color:#0f172a;border-bottom-left-radius:6px;border-bottom-right-radius:18px}
+.avatar-sm{width:36px;height:36px;border-radius:10px}
+
+/* Theme variants */
+.theme-dark{
+	/* dark animated gradient already applied to body; keep card surfaces darker */
+}
+
+.theme-light{
+	background: linear-gradient(180deg,#ffffff,#f8fafc);
+	color: #0f172a;
+}
+
+/* Light theme overrides for cards and bubbles */
+.theme-light .card-surface{background: #ffffff;border:1px solid rgba(2,6,23,0.04);backdrop-filter:none}
+.theme-light .phone-shell{background:linear-gradient(180deg,rgba(2,6,23,0.03),rgba(2,6,23,0.01));box-shadow:0 8px 20px rgba(2,6,23,0.06)}
+.theme-light .bubble-assistant{background:#f1f5f9;color:#0f172a}
+.theme-light .bubble-user{background:linear-gradient(180deg,#007aff,#0066d6);color:white}
+.theme-light .avatar-sm{background:linear-gradient(180deg,#0f172a,#0b1220)}
+
+/* Premium typography for light (white) background */
+.theme-light { font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial; }
+.theme-light .premium-heading { font-family: 'Playfair Display', serif; font-weight: 700; letter-spacing: -0.02em; }
+.theme-light .premium-sub { color: #475569; }
+.theme-light .premium-text { letter-spacing: -0.01em; }
+.theme-light .bubble { font-feature-settings: "kern" 1; }
+.theme-light .bubble-assistant { font-weight: 500; }
+.theme-light .bubble-user { font-weight: 600; }
+
+/* Premium surface variables and controls for light theme */
+.theme-light { --card-bg: #ffffff; --muted: #64748b; --accent: #059669; --soft-shadow: 0 10px 30px rgba(2,6,23,0.06); }
+.theme-light .card-surface{background:var(--card-bg);border:1px solid rgba(2,6,23,0.04);box-shadow:var(--soft-shadow)}
+.theme-light .phone-shell{background:linear-gradient(180deg,rgba(2,6,23,0.02),rgba(2,6,23,0.008));box-shadow:0 8px 30px rgba(2,6,23,0.06)}
+.theme-light .premium-heading{font-size:0.98rem}
+.theme-light .premium-sub{font-size:0.8rem}
+.theme-light .premium-text{font-size:0.95rem}
+
+/* Premium pills and buttons */
+.premium-chip{border-radius:9999px;padding:6px 10px;font-size:0.78rem;border:1px solid rgba(15,23,42,0.04);background:linear-gradient(180deg,rgba(2,6,23,0.02),rgba(2,6,23,0.01));}
+.theme-light .premium-chip{background:linear-gradient(180deg,#f8fafc,#ffffff);border:1px solid rgba(2,6,23,0.04);color:var(--muted)}
+.premium-button{border-radius:14px;padding:10px 16px;font-weight:600;box-shadow:0 6px 18px rgba(2,6,23,0.08)}
+.theme-light .premium-button{background:linear-gradient(90deg,#059669,#047857);color:#fff}
+.theme-light .premium-ghost{background:transparent;border:1px solid rgba(15,23,42,0.06);color:var(--muted);box-shadow:none}
+
+/* Slightly tighter chat bubbles and modern spacing */
+.theme-light .bubble{border-radius:14px;padding:14px 16px;line-height:1.35}
+.theme-light .bubble-assistant{background:#fff;border:1px solid rgba(15,23,42,0.04);box-shadow:0 6px 18px rgba(2,6,23,0.04)}
+.theme-light .bubble-user{background:linear-gradient(90deg,#059669,#047857);color:white}
+
+/* iMessage-like bubble polish */
+.bubble{position:relative;border-radius:18px;padding:12px 14px;line-height:1.3;max-width:85%;word-wrap:break-word}
+.bubble::after{content:'';position:absolute;width:14px;height:14px;bottom:6px;transform:rotate(45deg)}
+.bubble-user{border-radius:18px 18px 4px 18px}
+.bubble-user::after{right:-7px;background:linear-gradient(180deg,#007aff,#0066d6);box-shadow:0 4px 10px rgba(2,6,23,0.12)}
+.bubble-assistant{border-radius:18px 18px 18px 4px}
+.bubble-assistant::after{left:-7px;background:#fff;border-left:1px solid rgba(15,23,42,0.04);box-shadow:0 4px 10px rgba(2,6,23,0.06)}
+
+/* Phone shell: translucent, soft shadow to mimic device */
+.phone-shell{border-radius:32px;padding:20px;background:linear-gradient(180deg,rgba(255,255,255,0.9),rgba(248,250,252,0.95));box-shadow:0 18px 40px rgba(2,6,23,0.08);border:1px solid rgba(2,6,23,0.04)}
+
+/* Input shell: glass, rounded, friendly */
+.input-shell{display:flex;align-items:flex-end;gap:8px;border-radius:16px;padding:10px;border:1px solid rgba(15,23,42,0.04);background:linear-gradient(180deg,rgba(255,255,255,0.9),rgba(255,255,255,0.95));box-shadow:0 8px 24px rgba(2,6,23,0.06)}
+.input-shell textarea{background:transparent;font-size:15px;padding:8px 6px}
+.input-shell .suggestions{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}
+
+/* Avatar polish */
+.avatar-sm{width:36px;height:36px;border-radius:10px;box-shadow:0 4px 12px rgba(2,6,23,0.08);border:1px solid rgba(15,23,42,0.04)}
+.theme-light .avatar-sm{background:linear-gradient(180deg,#eef2ff,#f8fafc)}
+
+/* Typing indicator (animated dots) */
+.typing-bubble{display:inline-flex;align-items:center;gap:8px;padding:10px 14px;border-radius:18px;background:inherit;border:inherit;box-shadow:inherit}
+.typing-bubble::after{display:none}
+.typing-dots{display:inline-flex;align-items:center;gap:6px}
+.typing-dots span{width:6px;height:6px;border-radius:9999px;background:currentColor;display:inline-block;opacity:0.6;animation:typingBounce 0.9s infinite ease-in-out}
+.typing-dots span:nth-child(2){animation-delay:0.12s}
+.typing-dots span:nth-child(3){animation-delay:0.24s}
+@keyframes typingBounce{0%{transform:translateY(0);opacity:0.4}30%{transform:translateY(-6px);opacity:1}60%{transform:translateY(0);opacity:0.6}100%{transform:translateY(0);opacity:0.4}}
+
+
+/* Dark theme overrides (explicit) */
+.theme-dark .card-surface{background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.06)}
+.theme-dark .phone-shell{background:linear-gradient(180deg,rgba(255,255,255,0.02),rgba(255,255,255,0.01));box-shadow:0 20px 40px rgba(2,6,23,0.6),inset 0 1px 0 rgba(255,255,255,0.02)}
+.theme-dark .bubble-assistant{background:rgba(255,255,255,0.92);color:#0f172a}
+.theme-dark .bubble-user{background:linear-gradient(180deg,#007aff,#0066d6);color:white}
+.theme-dark .avatar-sm{background:linear-gradient(180deg,#0f172a,#0b1220)}
+

@@ -1,3 +1,25 @@
+# Node
 node_modules/
+backend/node_modules/
+frontend/node_modules/
+
+# Build outputs
 dist/
+.vite/
+
+# Env files
 .env
+.env.local
+
+# OS
+.DS_Store
+
+# Logs
+npm-debug.log*
+
+# Local lockfiles
+package-lock.json
+
+# IDE
+.vscode/
+.idea/

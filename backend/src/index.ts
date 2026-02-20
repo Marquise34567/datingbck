@@ -1,6 +1,5 @@
 import express from 'express';
 import cors from 'cors';
-import type { CorsOptions } from 'cors';
 import cookieParser from 'cookie-parser';
 import os from 'os';
 import multer from 'multer';
@@ -120,26 +119,24 @@ const app = express();
 // Trust proxy so secure cookies work behind tunnels/proxies
 app.set('trust proxy', 1);
 
-// BACKEND (Express)
-const allowedOrigins = new Set<string>([
-  "http://localhost:3000",
-  "http://localhost:3001",
-  "https://sparkdd.live",
-  "https://www.sparkdd.live",
-  // add your Vercel preview domains if you use them:
-  // "https://your-vercel-app.vercel.app",
-]);
+// CORS: allow sparkdd.live plus any additional origins set in ALLOWED_ORIGINS
+const DEFAULT_ALLOWED = ['https://sparkdd.live'];
+const envOrigins = (process.env.ALLOWED_ORIGINS || '').split(',').map(s => s.trim()).filter(Boolean);
+const allowedOrigins = Array.from(new Set([...DEFAULT_ALLOWED, ...envOrigins]));
+console.log('CORS allowed origins:', allowedOrigins);
 
-const corsOptions: CorsOptions = {
-  origin: (origin: string | undefined, callback: (err: Error | null, allow?: boolean) => void) => {
-    // allow non-browser requests (curl/postman) that have no origin
+const corsOptions = {
+  origin: (origin: string | undefined, callback: any) => {
+    // Allow non-browser requests with no origin (curl, server-to-server)
     if (!origin) return callback(null, true);
-
-    if (allowedOrigins.has(origin)) return callback(null, true);
-
-    return callback(new Error(`CORS blocked for origin: ${origin}`));
+    if (allowedOrigins.includes(origin)) return callback(null, true);
+    // allow local development hosts
+    if (origin.startsWith('http://localhost') || origin.startsWith('http://127.0.0.1')) return callback(null, true);
+    return callback(new Error('CORS origin denied'), false);
   },
   credentials: true,
+  methods: ['GET', 'POST', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'X-Session-Id'],
 };
 
 app.use(cors(corsOptions));
