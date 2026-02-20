@@ -119,27 +119,28 @@ const app = express();
 // Trust proxy so secure cookies work behind tunnels/proxies
 app.set('trust proxy', 1);
 
-// CORS: allow sparkdd.live plus any additional origins set in ALLOWED_ORIGINS
-const DEFAULT_ALLOWED = ['https://sparkdd.live'];
-const envOrigins = (process.env.ALLOWED_ORIGINS || '').split(',').map(s => s.trim()).filter(Boolean);
-const allowedOrigins = Array.from(new Set([...DEFAULT_ALLOWED, ...envOrigins]));
-console.log('CORS allowed origins:', allowedOrigins);
+// BACKEND (Express)
+const allowlist = [
+  "https://sparkdd.live",
+  "https://www.sparkdd.live",
+  // your Vercel preview domains (wildcards need custom logic)
+];
 
-const corsOptions = {
-  origin: (origin: string | undefined, callback: any) => {
-    // Allow non-browser requests with no origin (curl, server-to-server)
-    if (!origin) return callback(null, true);
-    if (allowedOrigins.includes(origin)) return callback(null, true);
-    // allow local development hosts
-    if (origin.startsWith('http://localhost') || origin.startsWith('http://127.0.0.1')) return callback(null, true);
-    return callback(new Error('CORS origin denied'), false);
+app.use(cors({
+  origin: (origin, cb) => {
+    if (!origin) return cb(null, true); // curl/postman
+    // allow sparkdd + vercel previews
+    const ok =
+      allowlist.includes(origin) ||
+      origin.endsWith('.vercel.app');
+    cb(ok ? null : new Error('Not allowed by CORS'), ok);
   },
   credentials: true,
-  methods: ['GET', 'POST', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'X-Session-Id'],
-};
+  methods: ['GET','POST','PUT','DELETE','OPTIONS'],
+  allowedHeaders: ['Content-Type','Authorization'],
+}));
 
-app.use(cors(corsOptions));
+app.options('*', cors());
 app.use(cookieParser());
 // Important: Stripe webhook needs the raw body. Register the raw parser
 // route before the JSON body parser middleware so the raw payload is available.
