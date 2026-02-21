@@ -5,8 +5,7 @@
   "main": "dist/index.js",
   "scripts": {
     "dev": "nodemon --watch src --ext ts,js,json --exec \"ts-node --transpile-only src/index.ts\"",
-    "build": "npx tsc -p .",
-    "postinstall": "npm run build",
+    "build": "npx --yes --package typescript tsc -p .",
     "start": "node dist/index.js",
     "test:screenshot": "node scripts/test_screenshot_coach.js"
   },
@@ -20,6 +19,7 @@
     "googleapis": "^116.0.0",
     "multer": "^1.4.5-lts.1",
     "stripe": "^12.10.0",
+    "typescript": "^5.1.6",
     "zod": "^3.23.2"
   },
   "devDependencies": {
@@ -31,7 +31,6 @@
     "form-data": "^4.0.0",
     "node-fetch": "^2.6.7",
     "nodemon": "^2.0.22",
-    "ts-node": "^10.9.1",
-    "typescript": "^5.1.6"
+    "ts-node": "^10.9.1"
   }
 }
