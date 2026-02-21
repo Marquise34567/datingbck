@@ -5,7 +5,7 @@
   "main": "dist/index.js",
   "scripts": {
     "dev": "nodemon --watch src --ext ts,js,json --exec \"ts-node --transpile-only src/index.ts\"",
-    "build": "tsc -p .",
+    "build": "npx tsc -p .",
     "postinstall": "npm run build",
     "start": "node dist/index.js",
     "test:screenshot": "node scripts/test_screenshot_coach.js"
