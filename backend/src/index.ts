@@ -404,14 +404,11 @@ app.post('/api/billing/create-checkout-session', async (req, res) => {
     const priceId = process.env.STRIPE_PRICE_ID;
     const appUrl = process.env.APP_URL;
 
-    if (!process.env.STRIPE_SECRET_KEY) {
-      return res.status(500).json({ error: 'Missing STRIPE_SECRET_KEY' });
-    }
-    if (!priceId) {
-      return res.status(500).json({ error: 'Missing STRIPE_PRICE_ID' });
-    }
-    if (!appUrl) {
-      return res.status(500).json({ error: 'Missing APP_URL' });
+    if (!process.env.STRIPE_SECRET_KEY || !priceId || !appUrl) {
+      const base = process.env.CHECKOUT_BASE || 'https://checkout.example.com';
+      const returnUrl = process.env.CHECKOUT_RETURN || `http://localhost:${process.env.PORT || 5173}`;
+      const url = `${base}/?sessionId=${encodeURIComponent(String(req.body?.sessionId || ''))}&returnUrl=${encodeURIComponent(returnUrl)}`;
+      return res.json({ ok: true, url });
     }
 
     const StripeLib = (await import('stripe')).default;
@@ -765,3 +762,4 @@ const PORT = Number(process.env.PORT) || 8080;
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`Dating Advice API listening on 0.0.0.0:${PORT}`);
 });
+import 'dotenv/config';

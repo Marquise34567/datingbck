@@ -1,7 +1,35 @@
 import { Redis } from '@upstash/redis';
 
-// Initialize from environment as requested
-export const redis = Redis.fromEnv();
+// Initialize from environment if available; otherwise provide an in-memory
+// fallback to avoid runtime errors when Upstash isn't configured.
+let redisClient: any;
+try {
+  redisClient = Redis.fromEnv();
+} catch (e) {
+  console.warn('Upstash Redis init failed, using in-memory fallback', e);
+  const store = new Map<string, string>();
+  redisClient = {
+    get: async (k: string) => (store.has(k) ? store.get(k) : null),
+    set: async (k: string, v: any) => {
+      store.set(k, String(v));
+      return true;
+    },
+    del: async (k: string) => (store.delete(k) ? 1 : 0),
+    incr: async (k: string) => {
+      const n = Number(store.get(k) ?? 0) + 1;
+      store.set(k, String(n));
+      return n;
+    },
+    incrby: async (k: string, by: number) => {
+      const n = Number(store.get(k) ?? 0) + by;
+      store.set(k, String(n));
+      return n;
+    },
+    expire: async (_k: string, _t?: number) => true,
+  } as any;
+}
+
+export const redis = redisClient as any;
 
 function isoWeekKey(d = new Date()) {
   const tmp = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));

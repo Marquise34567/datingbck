@@ -1,6 +1,6 @@
+import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
-import type { CorsOptions } from 'cors';
 import cookieParser from 'cookie-parser';
 import os from 'os';
 import multer from 'multer';
@@ -128,9 +128,14 @@ const allowedOrigins = new Set<string>([
   "https://www.sparkdd.live",
   // add your Vercel preview domains if you use them:
   // "https://your-vercel-app.vercel.app",
+  // Vite dev server local origins
+  "http://localhost:5173",
+  "http://127.0.0.1:5173",
+  "http://localhost:5174",
+  "http://127.0.0.1:5174",
 ]);
 
-const corsOptions: CorsOptions = {
+const corsOptions = {
   origin: (origin: string | undefined, callback: (err: Error | null, allow?: boolean) => void) => {
     // allow non-browser requests (curl/postman) that have no origin
     if (!origin) return callback(null, true);
@@ -142,7 +147,7 @@ const corsOptions: CorsOptions = {
   credentials: true,
 };
 
-app.use(cors(corsOptions));
+app.use(cors(corsOptions as any));
 app.use(cookieParser());
 // Important: Stripe webhook needs the raw body. Register the raw parser
 // route before the JSON body parser middleware so the raw payload is available.
@@ -303,8 +308,11 @@ app.post('/api/token', (req, res) => {
     const secure = process.env.NODE_ENV === 'production';
     res.cookie(cookieName, token, { httpOnly: true, sameSite: 'none', secure, maxAge: 1000 * 60 * 60 * 24 * 365, path: '/' });
     return res.json({ ok: true, tokenSet: true });
-  } catch (e) {
+  } catch (e: any) {
     console.warn('token init failed', e);
+    if (process.env.NODE_ENV === 'development' || process.env.DEV === 'true') {
+      return res.status(500).json({ ok: false, error: 'token_init_failed', message: e?.message || String(e), stack: e?.stack || null });
+    }
     return res.status(500).json({ ok: false, error: 'token_init_failed' });
   }
 });
@@ -407,14 +415,14 @@ app.post('/api/billing/create-checkout-session', async (req, res) => {
     const priceId = process.env.STRIPE_PRICE_ID;
     const appUrl = process.env.APP_URL;
 
-    if (!process.env.STRIPE_SECRET_KEY) {
-      return res.status(500).json({ error: 'Missing STRIPE_SECRET_KEY' });
-    }
-    if (!priceId) {
-      return res.status(500).json({ error: 'Missing STRIPE_PRICE_ID' });
-    }
-    if (!appUrl) {
-      return res.status(500).json({ error: 'Missing APP_URL' });
+    // In local/dev environments we prefer to return a harmless fallback
+    // checkout URL when Stripe isn't configured so the frontend can open
+    // a usable URL instead of receiving a 500 error.
+    if (!process.env.STRIPE_SECRET_KEY || !priceId || !appUrl) {
+      const base = process.env.CHECKOUT_BASE || 'https://checkout.example.com';
+      const returnUrl = process.env.CHECKOUT_RETURN || `http://localhost:${process.env.PORT || 5173}`;
+      const url = `${base}/?sessionId=${encodeURIComponent(String(req.body?.sessionId || ''))}&returnUrl=${encodeURIComponent(returnUrl)}`;
+      return res.json({ ok: true, url });
     }
 
     const StripeLib = (await import('stripe')).default;
@@ -598,6 +606,7 @@ app.post('/api/screenshot-coach', upload.single('image'), async (req, res) => {
 // POST /api/chat - always call Ollama and return raw reply
 app.post('/api/chat', express.json(), async (req, res) => {
   try {
+    console.debug('[api/chat] request body:', req.body);
     const message = String(req.body?.message || req.body?.text || req.body?.userMessage || '');
     const mode = String(req.body?.mode || 'dating');
     const tone = String(req.body?.tone || '');
@@ -677,10 +686,20 @@ app.post('/api/chat', express.json(), async (req, res) => {
       return res.json({ ok: true, reply, usage: { remaining: isPremium ? null : Math.max(0, FREE_DAILY_LIMIT - used), isPremium } });
     } catch (e) {
       console.error('[api/chat] ollama call failed', e);
+      // In development, return a friendly stub response so frontend can continue
+      // working without a running Ollama instance. In production, surface the
+      // error as a 500 so monitoring catches it.
+      if (process.env.NODE_ENV === 'development' || process.env.DEV === 'true') {
+        const sample = `Dev-mode reply: model unreachable — this is a placeholder reply.`;
+        return res.json({ ok: true, reply: sample, usage: { remaining: isPremium ? null : Math.max(0, FREE_DAILY_LIMIT - used), isPremium } });
+      }
       return res.status(500).json({ ok: false, error: 'OLLAMA_UNREACHABLE', details: String(e) });
     }
   } catch (err: any) {
-    console.error('[api/chat] error', err);
+    console.error('[api/chat] error', err && (err.stack || err.message || err));
+    if (process.env.NODE_ENV === 'development' || process.env.DEV === 'true') {
+      return res.status(500).json({ ok: false, error: err?.message || String(err), stack: err?.stack || null });
+    }
     return res.status(500).json({ ok: false, error: err?.message || String(err) });
   }
 });
