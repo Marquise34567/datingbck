@@ -18,7 +18,9 @@ dist/
 npm-debug.log*
 
 # Local lockfiles
-package-lock.json
+# allow package-lock in subpackages
+# (root lockfile is ignored at repo root)
+/package-lock.json
 
 # IDE
 .vscode/
